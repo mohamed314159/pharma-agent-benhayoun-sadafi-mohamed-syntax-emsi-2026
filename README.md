@@ -1,97 +1,86 @@
 # 💊 Pharma Research Agent
 
-Agentic research assistant that answers compound pharmacology questions over a local corpus of
-FDA labels (DailyMed) and MedlinePlus monographs, with **planning, agent-driven tool use, a
-grounding critic and cited answers**.
+Agentic research assistant that answers compound pharmacology questions over a local corpus of FDA
+labels (DailyMed) and MedlinePlus monographs: **decomposition, agent-driven routing, hybrid RAG with
+reranking, a comparator (critic) and a cited synthesis**.
 
 > Syntax GenAI Bootcamp — coding assignment · Mohamed BENHAYOUN SADAFI (EMSI) · 2026
 > ⚠️ Technical exercise — **not medical advice**.
 
+The architecture reuses the multi-source RAG assistant I designed during a previous internship
+(semantic chunking, sub-question routing with confidence scores, hybrid search 75/25 + reranking,
+comparator agent, synthesizer agent), adapted to this corpus and to the assignment's constraints.
+
 ## Quick start
 
 ```bash
-cp .env.example .env          # fill OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL
+cp .env.example .env          # OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL, OPENAI_EMBEDDING_MODEL
 docker build -t agent . && docker run -p 8000:8000 --env-file .env agent
 ```
 
-Open <http://localhost:8000> for the UI, or call the API:
+UI: <http://localhost:8000> · API:
 
 ```bash
 curl localhost:8000/health
-curl -X POST localhost:8000/ask -H "Content-Type: application/json" \
-     -d '{"question": "What are the main contraindications for warfarin?"}'
+curl -X POST localhost:8000/ask -H "Content-Type: application/json" -d '{"question": "What are the main contraindications for warfarin?"}'
 ```
 
-Local dev without Docker: `uv sync && uv run uvicorn pharma_agent.api:app --reload`
+Without Docker: `uv sync && uv run uvicorn pharma_agent.api:app`
 
-## API
+## Code (3 Python files)
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/health` | `200 {"status":"ok","documents":21,"chunks":546,...}` |
-| `POST` | `/ask` | `{"question": "..."}` → `{answer, sources[], plan, tool_calls[], review, disclaimer, latency_s}` |
-| `POST` | `/ask/stream` | Same pipeline as Server-Sent Events (plan, each tool call, drafts, critic rounds, final) — used by the UI |
-| `GET` | `/` | Web UI |
+| File | Role |
+|---|---|
+| [`pharma_agent/ingest.py`](pharma_agent/ingest.py) | Semantic chunking section by section, LLM titles, embeddings → `index/` |
+| [`pharma_agent/agent.py`](pharma_agent/agent.py) | In-memory hybrid index + orchestration (planner, agents, comparator, synthesizer) |
+| [`pharma_agent/api.py`](pharma_agent/api.py) | FastAPI: `GET /health`, `POST /ask`, UI |
+| [`pharma_agent/static/index.html`](pharma_agent/static/index.html) | Single-page UI with "See details" |
 
-## Architecture
+## 1. Ingestion — semantic chunking (`python -m pharma_agent.ingest`)
+
+Each `##` section of each document is chunked independently, so a chunk never mixes two sections:
+
+1. Split into sentences with **spaCy** (sentencizer).
+2. **Embed every sentence** (`text-embedding-3-small`).
+3. Walk the sentences: a sentence joins the previous chunk if its **cosine similarity** with the previous
+   sentence is above a threshold, otherwise it starts a new chunk.
+4. The threshold is **calibrated per section by binary search** so that chunks average **500 characters**.
+5. Chunks **> 600** chars are cut into ⌈size/500⌉ pieces with **10 % overlap**.
+6. Chunks **< 300** chars are merged with the previous chunk, else the next one, if the result stays ≤ 600
+   (repeated until no merge is possible).
+7. The LLM writes a **title/context (≤ 10 words)** for every chunk; title + chunk are embedded.
+
+The result (`index/chunks.json`, `index/embeddings.npy`) is versioned, so the container starts instantly.
+If the embedding model differs from the one used at ingestion, chunks are re-embedded at startup.
+
+## 2. Question answering (`POST /ask`)
 
 ```
 question
-   │
-   ▼
-┌────────┐  JSON: language, question type, drugs, sub-questions, in_scope
-│ 1 PLAN │──────────────────────────────────────────────────────────────┐
-└────────┘                                                              │
-   ▼                                                                    │
-┌────────────────────────────┐   OpenAI function calling, the LLM       │
-│ 2-3 RESEARCH (tool loop)   │   chooses tools & args (≤ 6 rounds,      │
-│  search_corpus   (hybrid)  │   parallel calls allowed)                │
-│  get_section     (labels)  │──► every passage → EvidenceStore [E1..En]│
-│  list_sections             │                                          │
-│  lookup_glossary           │                                          │
-└────────────────────────────┘                                          │
-   ▼                                                                    │
-┌────────┐  answer from evidence only, every sentence cites [E#]        │
-│ DRAFT  │◄─────────────────────────────────────────────┐               │
-└────────┘                                              │ issues +      │
-   ▼                                                    │ follow-up     │
-┌──────────────┐  LLM judge: unsupported / ambiguous /  │ searches      │
-│ 4 CRITIC     │  missing / citation  + deterministic   │ (≤1 revision) │
-│              │  check of cited ids  ──── revise ──────┘               │
-└──────────────┘                                                        │
-   ▼ pass                                                               │
-┌──────────┐  [E#] → numbered sources (file › section), disclaimer       │
-│ 5 ANSWER │◄────────────────────────────────────────────────────────────┘
-└──────────┘
+  └─ PLANNER: decompose into sub-questions + classify each one → [{route, confidence}]
+       routes (catalog summary): dailymed (FDA label) · medlineplus (consumer info) · glossary
+       every route with confidence ≥ 0.5 is called  → tool choice is made by the LLM, not hard-coded
+  └─ for each sub-question (in parallel)
+       └─ RAG AGENT per chosen route
+            hybrid search in its collection: 0.75 × semantic (cosine) + 0.25 × keyword (BM25), min-max normalised
+            50 candidates → LLM reranker (0–10) → top 5 → answer citing [file]
+       └─ COMPARATOR (critic): does each answer address the sub-question? is every claim supported by the chunks?
+            flags unsupported / clinically ambiguous claims and contradictions,
+            keeps both answers if consistent, the most reliable one if they contradict → verified answer
+  └─ SYNTHESIZER: final answer from verified sub-answers, [file] citations, "Points to verify", disclaimer
 ```
 
-| Module | Role |
-|---|---|
-| `pharma_agent/corpus.py` | Parses markdown into **heading-aware chunks** (a chunk never spans two sections and carries its heading path: `4 CONTRAINDICATIONS`, `7.3 Drugs that Increase Bleeding Risk`) |
-| `pharma_agent/index.py` | **In-memory hybrid retrieval**: numpy cosine similarity on embeddings + BM25, fused with Reciprocal Rank Fusion; drug/source filters; embeddings cached on disk |
-| `pharma_agent/tools.py` | The 4 local tools + JSON schemas + `EvidenceStore` |
-| `pharma_agent/agent.py` | The hand-written agent loop (generator of events) |
-| `pharma_agent/prompts.py` | All prompts in one place |
-| `pharma_agent/api.py` | FastAPI app (REST + SSE + static UI) |
-| `pharma_agent/static/index.html` | Single-file UI: live agent trace, clickable citations, critic report |
+The response contains `answer`, `sources` (file › section › title), `details` (sub-questions, routes with
+confidence, each agent's answer and chunks with reranker scores, comparator verdict) and `disclaimer`.
 
-### Design choices
-
-- **Own loop instead of LangChain/LangGraph** — the workflow is 5 explicit steps; a ~200-line loop
-  over the OpenAI SDK is easier to read, debug and explain, and works with any OpenAI-compatible
-  endpoint (the LiteLLM proxy) with zero adapters.
-- **Section-aware chunking** — drug labels are strongly structured; questions like "main
-  contraindications" need the *whole* section, so the agent has `get_section` for exhaustive lists
-  and `search_corpus` for targeted facts. The model picks, not the code.
-- **Hybrid retrieval** — embeddings handle paraphrases, BM25 handles exact tokens (drug names,
-  `eGFR`, `CYP2C9`, numbers). RRF avoids score calibration.
-- **Evidence ids end-to-end** — tools register every passage they return (`[E7]`); the writer must
-  cite ids; the critic checks claims against those passages, plus a deterministic check that every
-  cited id exists. Ids are finally renumbered into user-facing `[1] dailymed-warfarin.md › 4 CONTRAINDICATIONS`.
-- **Critic with feedback loop** — when it finds issues it proposes follow-up queries, the agent
-  retrieves more evidence and rewrites (bounded by `AGENT_MAX_REVISIONS`).
-- **Robust config** — the provided `.env` names the proxy URL `OPENAI_BASE_UR` (missing `L`); both
-  spellings are accepted.
+### Adaptations vs. my internship design
+- **Weaviate → numpy in memory**: the assignment requires in-memory similarity and a single container.
+- **Cross-encoder / Voyage reranker → LLM reranker**: only OpenAI models are available through the provided key,
+  and a local cross-encoder would add PyTorch (~2 GB) to the image.
+- **No Excel/SQL agent**: the corpus contains no tables, so the relational agent has nothing to query; the two
+  agents become the DailyMed agent and the MedlinePlus agent.
+- The provided `.env` names the proxy URL `OPENAI_BASE_UR` and quotes its values: both spellings are accepted
+  and quotes are stripped (`docker --env-file` keeps them).
 
 ## Evaluation
 
@@ -99,28 +88,8 @@ question
 uv run python -m tests.eval_questions --verbose
 ```
 
-Runs the 4 public questions and checks that the expected source files are cited:
-
-| Question | Expected | Result |
-|---|---|---|
-| Main contraindications of warfarin | dailymed-warfarin | ✅ cited, critic pass |
-| Warfarin vs apixaban contraindications | dailymed-warfarin, dailymed-apixaban | ✅ cited, critic pass |
-| Warfarin + sertraline bleeding & monitoring | dailymed-warfarin, dailymed-sertraline | ✅ cited, critic pass |
-| Metformin at eGFR 25 | dailymed-metformin | ✅ cited (threshold < 30 mL/min/1.73 m²), critic pass |
-
-## Configuration
-
-| Variable | Default | |
-|---|---|---|
-| `OPENAI_API_KEY` | — | required |
-| `OPENAI_BASE_URL` / `OPENAI_BASE_UR` | OpenAI | LiteLLM proxy URL |
-| `OPENAI_MODEL` | `gpt-4o-mini` | chat model |
-| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | |
-| `AGENT_MAX_TOOL_ROUNDS` | `6` | research loop budget |
-| `AGENT_MAX_REVISIONS` | `1` | critic → rewrite rounds |
+Runs the 4 public questions and checks that the expected source files are cited.
 
 ## AI assistance
 
-Built with Claude Code (as encouraged by the assignment). The AI coding configuration is versioned
-in [`.claude/`](.claude/) and [`CLAUDE.md`](CLAUDE.md). Every file was reviewed and I can walk
-through any design decision.
+Built with Claude Code. The AI configuration is versioned in [`.claude/`](.claude/) and [`CLAUDE.md`](CLAUDE.md).

@@ -16,8 +16,9 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY pharma_agent ./pharma_agent
 COPY corpus ./corpus
+COPY index ./index
 
-RUN useradd --create-home appuser && mkdir -p /app/.cache && chown -R appuser /app
+RUN useradd --create-home appuser && chown -R appuser /app
 USER appuser
 
 EXPOSE 8000
