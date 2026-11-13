@@ -1,0 +1,14 @@
+[project]
+name = "pharma-agent"
+version = "0.1.0"
+description = "Agentic research assistant over a local pharmacology corpus"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.162.6",
+    "numpy>=2.5.4",
+    "openai>=3.50.0",
+    "pydantic>=2.14.3",
+    "python-dotenv>=1.2.4",
+    "uvicorn[standard]>=0.54.0",
+]

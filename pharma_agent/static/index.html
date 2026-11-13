@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pharma Research Agent</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1b1f24; --muted: #5f6b7a; --border: #e3e6ea;
+    --accent: #1f5fd6; --accent-soft: #e8f0fe; --ok: #1a7f37; --warn: #9a6700; --bad: #c62828;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1216; --panel: #171b21; --text: #e6e9ee; --muted: #98a2b0; --border: #2a3039;
+            --accent: #6ea2ff; --accent-soft: #1c2a44; --ok: #4ac26b; --warn: #d4a72c; --bad: #ff6b6b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 20px 16px 8px; max-width: 1180px; margin: 0 auto; }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  main { max-width: 1180px; margin: 0 auto; padding: 8px 16px 40px; display: grid;
+         grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  form { display: flex; gap: 8px; }
+  textarea { flex: 1; resize: vertical; min-height: 52px; padding: 10px 12px; font: inherit; color: var(--text);
+             background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 0 18px;
+           font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: progress; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip { background: var(--accent-soft); color: var(--accent); border: 0; padding: 4px 10px; font-size: 12.5px;
+          border-radius: 999px; font-weight: 500; }
+  #answer { margin-top: 16px; min-height: 80px; }
+  #answer table { border-collapse: collapse; width: 100%; font-size: 14px; margin: 8px 0; display: block; overflow-x: auto; }
+  #answer th, #answer td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: top; }
+  #answer h2 { font-size: 16px; margin: 18px 0 6px; }
+  #answer hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0 8px; }
+  .cite { color: var(--accent); font-weight: 600; cursor: pointer; text-decoration: none; font-size: .85em; vertical-align: super; }
+  .placeholder { color: var(--muted); }
+  h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  aside .panel + .panel { margin-top: 16px; }
+  ol.trace { list-style: none; padding: 0; margin: 0; font-size: 13px; }
+  ol.trace li { padding: 6px 0 6px 18px; border-left: 2px solid var(--border); position: relative; }
+  ol.trace li::before { content: ""; position: absolute; left: -5px; top: 11px; width: 8px; height: 8px;
+                        border-radius: 50%; background: var(--accent); }
+  ol.trace code { font-family: var(--mono); font-size: 12px; background: var(--bg); padding: 1px 4px; border-radius: 4px; word-break: break-word; }
+  .muted { color: var(--muted); }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .pass { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+  .revise { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .error { color: var(--bad); }
+  .source { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; }
+  .source.flash { outline: 2px solid var(--accent); }
+  .source summary { cursor: pointer; }
+  .source pre { white-space: pre-wrap; font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 6px 0 0; max-height: 220px; overflow: auto; }
+  .issue { font-size: 12.5px; margin: 4px 0; }
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent);
+             border-radius: 50%; animation: spin 1s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>💊 Pharma Research Agent</h1>
+  <p>Agentic RAG over DailyMed labels &amp; MedlinePlus monographs · plan → tools → critic → cited answer. Not medical advice.</p>
+</header>
+<main>
+  <section class="panel">
+    <form id="form">
+      <textarea id="q" placeholder="Ask a question about warfarin, apixaban, metformin, sertraline, ibuprofen…" required></textarea>
+      <button id="go" type="submit">Ask</button>
+    </form>
+    <div class="chips" id="chips"></div>
+    <div id="answer"><p class="placeholder">The answer will appear here, with numbered citations to the source files.</p></div>
+  </section>
+  <aside>
+    <div class="panel"><h3>Agent trace</h3><ol class="trace" id="trace"><li class="muted">Idle</li></ol></div>
+    <div class="panel"><h3>Critic review</h3><div id="review" class="muted">—</div></div>
+    <div class="panel"><h3>Sources</h3><div id="sources" class="muted">—</div></div>
+  </aside>
+</main>
+<script>
+const EXAMPLES = [
+  "What are the main contraindications for warfarin?",
+  "Compare the contraindications of warfarin and apixaban. What conditions are shared and which are unique to each drug?",
+  "A patient currently on warfarin is prescribed sertraline. What is the risk of bleeding and what monitoring is recommended?",
+  "A patient with an eGFR of 25 mL/min is being considered for metformin. Is it contraindicated, and what is the threshold?",
+  "Can I take ibuprofen with aspirin?",
+];
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+for (const ex of EXAMPLES) {
+  const b = document.createElement("button");
+  b.className = "chip"; b.type = "button"; b.textContent = ex.length > 60 ? ex.slice(0, 57) + "…" : ex; b.title = ex;
+  b.onclick = () => { $("q").value = ex; $("form").requestSubmit(); };
+  $("chips").appendChild(b);
+}
+
+function md(text) {
+  const html = window.marked ? marked.parse(text) : "<pre>" + esc(text) + "</pre>";
+  const safe = window.DOMPurify ? DOMPurify.sanitize(html) : html;
+  return safe.replace(/\[(\d+)\]/g, '<a class="cite" data-n="$1">[$1]</a>');
+}
+
+function addTrace(html) {
+  const li = document.createElement("li"); li.innerHTML = html; $("trace").appendChild(li); return li;
+}
+
+function describe(ev) {
+  switch (ev.type) {
+    case "plan": {
+      const p = ev.plan;
+      const subs = (p.sub_questions || []).map(s => `<div class="muted">• ${esc(s)}</div>`).join("");
+      return `<b>Plan</b> <span class="muted">${esc(p.question_type || "")} · ${esc((p.drugs || []).join(", ") || "no corpus drug")}</span>${subs}`;
+    }
+    case "tool": {
+      const args = Object.entries(ev.args || {}).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ");
+      return `<b>Tool</b> <code>${esc(ev.tool)}(${esc(args)})</code>${ev.reason ? ` <span class="muted">(${esc(ev.reason)})</span>` : ""}`;
+    }
+    case "research_done": return `<b>Research done</b>`;
+    case "draft": return `<b>${ev.revision ? "Revised draft" : "Draft written"}</b> <span class="muted">${ev.chars} chars</span>`;
+    case "review": {
+      const r = ev.review || {};
+      return `<b>Critic round ${ev.round}</b> <span class="badge ${r.verdict === "pass" ? "pass" : "revise"}">${esc(r.verdict)}</span> <span class="muted">${(r.issues || []).length} issue(s)</span>`;
+    }
+    default: return null;
+  }
+}
+
+function renderFinal(res) {
+  $("answer").innerHTML = md(res.answer);
+  const srcs = res.sources || [];
+  $("sources").innerHTML = srcs.length ? srcs.map(s =>
+    `<details class="source" id="src-${s.n}"><summary><b>[${s.n}]</b> ${esc(s.file)}<div class="muted">${esc(s.section)}</div></summary><pre>${esc(s.excerpt)}…</pre></details>`
+  ).join("") : '<span class="muted">No sources cited.</span>';
+  const r = res.review;
+  if (r) {
+    const issues = (r.issues || []).map(i => `<div class="issue">⚠️ <b>${esc(i.type)}</b>: ${esc(i.detail || i.claim)}</div>`).join("");
+    $("review").innerHTML = `<span class="badge ${r.verdict === "pass" ? "pass" : "revise"}">${esc(r.verdict)}</span>
+      <span class="muted">grounding confidence ${r.confidence ?? "?"}</span>${issues || '<div class="issue muted">No unsupported claims flagged.</div>'}`;
+  } else {
+    $("review").textContent = "—";
+  }
+  addTrace(`<b>Answer ready</b> <span class="muted">${res.latency_s}s</span>`);
+}
+
+$("answer").addEventListener("click", (e) => {
+  const n = e.target.dataset && e.target.dataset.n;
+  const el = n && $("src-" + n);
+  if (!el) return;
+  el.open = true; el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1200);
+});
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const question = $("q").value.trim();
+  if (question.length < 3) return;
+  $("go").disabled = true;
+  $("trace").innerHTML = ""; $("sources").textContent = "—"; $("review").textContent = "—";
+  $("answer").innerHTML = '<p class="placeholder"><span class="spinner"></span>Researching…</p>';
+  try {
+    const resp = await fetch("/ask/stream", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question }),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+    const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const line = buf.slice(0, idx).trim(); buf = buf.slice(idx + 2);
+        if (!line.startsWith("data:")) continue;
+        const ev = JSON.parse(line.slice(5));
+        if (ev.type === "final") renderFinal(ev.result);
+        else if (ev.type === "error") throw new Error(ev.message);
+        else { const h = describe(ev); if (h) addTrace(h); }
+      }
+    }
+  } catch (err) {
+    $("answer").innerHTML = `<p class="error">Error: ${esc(err.message)}</p>`;
+  } finally {
+    $("go").disabled = false;
+  }
+});
+$("q").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); } });
+</script>
+</body>
+</html>

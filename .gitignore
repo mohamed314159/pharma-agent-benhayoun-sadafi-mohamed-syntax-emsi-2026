@@ -1,0 +1,8 @@
+# secrets & local data
+.env
+assignment-pharma/
+# python
+.venv/
+__pycache__/
+*.pyc
+.cache/
