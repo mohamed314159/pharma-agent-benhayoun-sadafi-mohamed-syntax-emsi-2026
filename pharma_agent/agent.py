@@ -12,6 +12,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import cache
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from dotenv import load_dotenv
@@ -23,13 +24,14 @@ INDEX_DIR = ROOT / "index"
 load_dotenv(ROOT / ".env")
 
 
-def env(name: str, default: str | None = None) -> str | None:
+def env(name: str, default: str = "") -> str:
     value = os.getenv(name)  # `docker --env-file` keeps quotes, so strip them
     return value.strip().strip("'\"") if value else default
 
 
 # The provided .env names the proxy URL OPENAI_BASE_UR (missing L): accept both spellings.
-client = OpenAI(api_key=env("OPENAI_API_KEY"), base_url=env("OPENAI_BASE_URL") or env("OPENAI_BASE_UR"), max_retries=3)
+client = OpenAI(api_key=env("OPENAI_API_KEY") or None, base_url=env("OPENAI_BASE_URL") or env("OPENAI_BASE_UR") or None,
+                max_retries=3)
 CHAT_MODEL = env("OPENAI_MODEL", "gpt-4o-mini")
 EMBED_MODEL = env("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
 
@@ -45,11 +47,12 @@ CATALOG = {  # summary of each route, the only thing the router sees
 }
 
 # ----------------------------------------------------------------------------- LLM helpers
-def chat(system: str, user: str, as_json: bool = False):
+def chat(system: str, user: str, as_json: bool = False) -> Any:
+    """Plain text, or a dict parsed from the model's JSON (`{}` if malformed) when as_json."""
     response = client.chat.completions.create(
         model=CHAT_MODEL,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-        **({"response_format": {"type": "json_object"}} if as_json else {}),
+        response_format={"type": "json_object"} if as_json else {"type": "text"},
     )
     content = response.choices[0].message.content or ""
     if not as_json:
@@ -141,11 +144,13 @@ def rag_agent(route: str, question: str) -> dict:
     scores = chat(RERANKER, f"QUESTION: {question}\n\nEXCERPTS:\n{excerpts}", as_json=True).get("scores", [])
     if len(scores) != len(candidates):  # malformed reranker output: keep the hybrid order
         scores = list(range(len(candidates), 0, -1))
-    order = sorted(range(len(candidates)), key=lambda i: -scores[i])[:TOP_K]
-    top = [candidates[i] | {"rerank_score": scores[i]} for i in order]
+    retrieved = [c | {"rerank_score": s, "kept": False} for c, s in zip(candidates, scores)]  # hybrid order
+    top = sorted(retrieved, key=lambda c: -c["rerank_score"])[:TOP_K]
+    for c in top:
+        c["kept"] = True  # same dicts as in `retrieved`: flags them there too
     context = "\n\n".join(f"{c['file']} › {c['section']} — {c['title']}\n{c['text']}" for c in top)
     answer = chat(AGENT.format(route=route), f"QUESTION: {question}\n\nEXCERPTS:\n{context}")
-    return {"answer": answer, "chunks": top}
+    return {"answer": answer, "chunks": top, "retrieved": retrieved}
 
 
 def answer_sub_question(sub: dict) -> dict:

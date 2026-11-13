@@ -23,6 +23,7 @@
   details { margin-top:8px; } summary { cursor:pointer; font-weight:600; }
   .sub { border-left:3px solid var(--accent); padding-left:12px; margin:14px 0; }
   .chunk { font-size:12.5px; color:var(--muted); border:1px solid var(--border); border-radius:6px; padding:6px 8px; margin:4px 0; white-space:pre-wrap; }
+  .chunk.kept { border-color:var(--accent); background:var(--soft); color:var(--text); }
   .issue { color:var(--warn); font-size:13px; }
 </style>
 </head>
@@ -50,8 +51,8 @@ const md = s => window.marked ? DOMPurify.sanitize(marked.parse(s)) : `<pre>${es
 function details(subs) {
   return subs.map((s, i) => `<div class="sub"><b>Sub-question ${i + 1}:</b> ${esc(s.question)}
     <div class="muted">Routes: ${s.routes.map(r => `${esc(r.route)} (${r.confidence})`).join(", ")}</div>
-    ${Object.entries(s.agents).map(([route, a]) => `<details><summary>${esc(route)} agent — answer and ${a.chunks.length} chunks</summary>
-      <div>${md(a.answer)}</div>${a.chunks.map(c => `<div class="chunk"><b>${esc(c.file)} › ${esc(c.section)}</b> — ${esc(c.title)} · reranker ${c.rerank_score}/10\n${esc(c.text)}</div>`).join("")}</details>`).join("")}
+    ${Object.entries(s.agents).map(([route, a]) => `<details><summary>${esc(route)} agent — answer, ${a.retrieved.length} retrieved, ${a.chunks.length} kept after reranking</summary>
+      <div>${md(a.answer)}</div>${a.retrieved.map(c => `<div class="chunk${c.kept ? " kept" : ""}">${c.kept ? "✅ " : ""}<b>${esc(c.file)} › ${esc(c.section)}</b> — ${esc(c.title)} · reranker ${c.rerank_score}/10\n${esc(c.text)}</div>`).join("")}</details>`).join("")}
     <div><b>Comparator:</b> kept ${esc((s.review.kept || []).join(", ") || "—")}${s.review.contradiction ? " · contradiction detected" : ""}</div>
     ${(s.review.issues || []).map(x => `<div class="issue">⚠️ ${esc(x.type)}: ${esc(x.claim)} — ${esc(x.detail)}</div>`).join("")}</div>`).join("");
 }

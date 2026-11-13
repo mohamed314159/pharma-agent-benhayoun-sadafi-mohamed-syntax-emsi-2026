@@ -99,9 +99,9 @@ def merge_small(chunks):
 def build():
     sections_ = []  # (file, section, sentences)
     for path in sorted((ROOT / "corpus").glob("*.md")):
-        for title, lines in sections(path):
+        for section, lines in sections(path):
             sentences = [s.text.strip() for doc in nlp.pipe(lines) for s in doc.sents if s.text.strip()]
-            sections_.append((path.name, title, sentences))
+            sections_.append((path.name, section, sentences))
 
     vectors = embed([s for _, _, sentences in sections_ for s in sentences])  # all sentences in one go
     chunks, offset = [], 0
@@ -116,7 +116,7 @@ def build():
         prompt = f"Write a title/context of at most 10 words for this excerpt of {chunk['file']} (section {chunk['section']}). Reply with the title only."
         try:
             return chat(prompt, chunk["text"]).strip('"')[:150]
-        except Exception:  # a refused/failed call must not break the ingestion
+        except Exception:  # noqa: BLE001 — a refused/failed call must not break the ingestion
             return f"{chunk['file'][:-3]} — {chunk['section']}"
 
     with ThreadPoolExecutor(8) as pool:

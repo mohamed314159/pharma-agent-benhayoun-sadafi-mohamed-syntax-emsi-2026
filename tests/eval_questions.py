@@ -3,9 +3,13 @@
 Usage: uv run python -m tests.eval_questions [--verbose]
 """
 
+import io
 import sys
 
 from pharma_agent.agent import ask
+
+if isinstance(sys.stdout, io.TextIOWrapper):  # Windows consoles default to cp1252
+    sys.stdout.reconfigure(encoding="utf-8")
 
 EVAL_SET = [
     ("What are the main contraindications for warfarin?", {"dailymed-warfarin.md"}),

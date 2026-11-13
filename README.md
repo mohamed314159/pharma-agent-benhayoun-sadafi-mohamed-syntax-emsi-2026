@@ -16,6 +16,7 @@ comparator agent, synthesizer agent), adapted to this corpus and to the assignme
 ```bash
 cp .env.example .env          # OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL, OPENAI_EMBEDDING_MODEL
 docker build -t agent . && docker run -p 8000:8000 --env-file .env agent
+# or, equivalently: docker compose up -d --build   (stop: docker compose down)
 ```
 
 UI: <http://localhost:8000> · API:

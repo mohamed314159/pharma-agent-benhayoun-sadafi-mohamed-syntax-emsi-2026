@@ -1,0 +1,9 @@
+# Shortcut for: docker build -t agent . && docker run -p 8000:8000 --env-file .env agent
+# Usage: docker compose up -d --build   →   http://localhost:8000   (stop: docker compose down)
+services:
+  agent:
+    build: .
+    image: agent
+    ports:
+      - "8000:8000"
+    env_file: .env
