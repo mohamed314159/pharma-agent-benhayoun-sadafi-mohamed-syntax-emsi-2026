@@ -28,7 +28,8 @@ for question, expected in EVAL_SET:
     passed += expected <= cited
     print(f"\n{'PASS' if expected <= cited else 'FAIL'} ({result['latency_s']}s) {question}\n  expected={sorted(expected)} cited={sorted(cited)}")
     for d in result["details"]:
-        print(f"  - {d['question']} -> routes {[(r['route'], r['confidence']) for r in d['routes']]} kept={d['review'].get('kept')} issues={len(d['review'].get('issues', []))}")
+        print(f"  - {d['question']} -> routes {[(r['route'], r['confidence']) for r in d['routes']]} kept={d['review'].get('kept')} "
+              f"sections={[(s['drug'], s['section']) for s in d['sections']]} terms={[g['term'] for g in d['glossary']]} issues={len(d['review'].get('issues', []))}")
     if "--verbose" in sys.argv:
         print(result["answer"])
 print(f"\n{passed}/{len(EVAL_SET)} questions cite all expected sources")

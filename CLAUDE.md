@@ -12,8 +12,9 @@ from a previous internship.
 
 ## Conventions
 - Keep the code minimal: 3 Python files (`ingest.py`, `agent.py`, `api.py`).
-- Pipeline: planner (sub-questions + JSON routes with confidence) → RAG agents (hybrid 75/25, 50 → rerank → 5)
-  → comparator (critic) → synthesizer. Prompts are constants at the top of `agent.py`.
+- Pipeline (LangGraph `StateGraph`): planner (sub-questions + tool choice: search_corpus always, read_label_section,
+  glossary_lookup) → one `Send` branch per sub-question (tools → comparator/critic) → synthesizer.
+  search_corpus = hybrid 75/25, 50 → rerank → 5. LLM calls use the OpenAI SDK directly. Prompts are constants in `agent.py`.
 - Chunking parameters (500 target, 600 max, 300 min, 10 % overlap, titles ≤ 10 words) come from my spec: don't change them silently.
 - Config only via env vars; never commit `.env`. Answers must cite `[file]` and end with the disclaimer.
 - Keep dependencies pinned (`uv.lock` + exported `requirements.txt`).

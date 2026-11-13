@@ -1,8 +1,8 @@
 # 💊 Pharma Research Agent
 
 Agentic research assistant that answers compound pharmacology questions over a local corpus of FDA
-labels (DailyMed) and MedlinePlus monographs: **decomposition, agent-driven routing, hybrid RAG with
-reranking, a comparator (critic) and a cited synthesis**.
+labels (DailyMed) and MedlinePlus monographs: **decomposition, agent-driven tool choice (3 local tools), hybrid
+RAG with reranking, a comparator (critic) and a cited synthesis**, orchestrated with **LangGraph**.
 
 > Syntax GenAI Bootcamp — coding assignment · Mohamed BENHAYOUN SADAFI (EMSI) · 2026
 > ⚠️ Technical exercise — **not medical advice**.
@@ -33,7 +33,7 @@ Without Docker: `uv sync && uv run uvicorn pharma_agent.api:app`
 | File | Role |
 |---|---|
 | [`pharma_agent/ingest.py`](pharma_agent/ingest.py) | Semantic chunking section by section, LLM titles, embeddings → `index/` |
-| [`pharma_agent/agent.py`](pharma_agent/agent.py) | In-memory hybrid index + orchestration (planner, agents, comparator, synthesizer) |
+| [`pharma_agent/agent.py`](pharma_agent/agent.py) | In-memory hybrid index, 3 tools, LangGraph orchestration (planner, sub-question branches, synthesizer) |
 | [`pharma_agent/api.py`](pharma_agent/api.py) | FastAPI: `GET /health`, `POST /ask`, UI |
 | [`pharma_agent/static/index.html`](pharma_agent/static/index.html) | Single-page UI with "See details" |
 
@@ -56,30 +56,52 @@ If the embedding model differs from the one used at ingestion, chunks are re-emb
 
 ## 2. Question answering (`POST /ask`)
 
+Orchestrated as a **LangGraph `StateGraph`**: the planner node fans out with `Send` to one parallel
+`sub_question` branch per sub-question; the branches' results are merged into the state (`operator.add` reducer)
+before the synthesizer node.
+
+```mermaid
+graph LR
+  START --> planner
+  planner -. "Send × N (in scope)" .-> sub_question["sub_question<br/>tools → comparator"]
+  planner -. "out of scope" .-> synthesizer
+  sub_question --> synthesizer --> END
+```
+
+LLM calls go straight through the OpenAI SDK (LiteLLM proxy): LangGraph only handles the orchestration
+(state, parallel fan-out, merge), which keeps every prompt and tool explicit.
+
 ```
 question
-  └─ PLANNER: decompose into sub-questions + classify each one → [{route, confidence}]
-       routes (catalog summary): dailymed (FDA label) · medlineplus (consumer info) · glossary
-       every route with confidence ≥ 0.5 is called  → tool choice is made by the LLM, not hard-coded
+  └─ PLANNER: decompose into sub-questions; for each one, choose the tools and their arguments (JSON)
   └─ for each sub-question (in parallel)
-       └─ RAG AGENT per chosen route
-            hybrid search in its collection: 0.75 × semantic (cosine) + 0.25 × keyword (BM25), min-max normalised
-            50 candidates → LLM reranker (0–10) → top 5 → answer citing [file]
-       └─ COMPARATOR (critic): does each answer address the sub-question? is every claim supported by the chunks?
-            flags unsupported / clinically ambiguous claims and contradictions,
+       └─ TOOL 1 search_corpus(source)  — always called, on every source with confidence ≥ 0.5
+            sources (catalog summary): dailymed (FDA labels) · medlineplus (consumer info)
+            hybrid search: 0.75 × semantic (cosine) + 0.25 × keyword (BM25), min-max normalised
+            50 candidates → LLM reranker (0–10) → top 5 → agent answer citing [file]
+       └─ TOOL 2 read_label_section(drug, section)  — only when a precise drug AND section are targeted
+            exact lookup, no similarity: returns the whole `##` section of the FDA label, word for word
+       └─ TOOL 3 glossary_lookup(terms)  — only when a term must be defined
+            exact definitions from GLOSSARY.md
+       └─ COMPARATOR (critic): does each answer address the sub-question? is every claim supported by the
+            chunks / exact excerpts? flags unsupported / clinically ambiguous claims and contradictions,
             keeps both answers if consistent, the most reliable one if they contradict → verified answer
   └─ SYNTHESIZER: final answer from verified sub-answers, [file] citations, "Points to verify", disclaimer
 ```
 
-The response contains `answer`, `sources` (file › section › title), `details` (sub-questions, routes with
-confidence, each agent's answer and chunks with reranker scores, comparator verdict) and `disclaimer`.
+Tool choice is made by the LLM (planner), not hard-coded: it only sees each tool's description, the list of
+drugs and the list of label sections (both read from the corpus).
+
+The response contains `answer`, `sources` (file › section › title), `details` (sub-questions, tools called with
+their arguments, each search agent's 50 retrieved chunks with reranker scores — the 5 kept are flagged —, exact
+sections and definitions, comparator verdict) and `disclaimer`.
 
 ### Adaptations vs. my internship design
 - **Weaviate → numpy in memory**: the assignment requires in-memory similarity and a single container.
 - **Cross-encoder / Voyage reranker → LLM reranker**: only OpenAI models are available through the provided key,
   and a local cross-encoder would add PyTorch (~2 GB) to the image.
 - **No Excel/SQL agent**: the corpus contains no tables, so the relational agent has nothing to query; the two
-  agents become the DailyMed agent and the MedlinePlus agent.
+  search sources become DailyMed and MedlinePlus, and two exact-lookup tools (label section, glossary) are added.
 - The provided `.env` names the proxy URL `OPENAI_BASE_UR` and quotes its values: both spellings are accepted
   and quotes are stripped (`docker --env-file` keeps them).
 

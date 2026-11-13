@@ -30,7 +30,7 @@
 <body>
 <main>
   <h1>💊 Pharma Research Agent</h1>
-  <div class="muted">Decompose → route → DailyMed / MedlinePlus / glossary agents → comparator → synthesizer. Not medical advice.</div>
+  <div class="muted">Decompose → tools chosen by the planner (search_corpus · read_label_section · glossary_lookup) → comparator → synthesizer. Not medical advice.</div>
   <div class="panel">
     <form id="form"><textarea id="q" placeholder="Ask about warfarin, apixaban, metformin, sertraline, ibuprofen…" required></textarea><button id="go">Ask</button></form>
     <div id="chips"></div>
@@ -50,9 +50,11 @@ const md = s => window.marked ? DOMPurify.sanitize(marked.parse(s)) : `<pre>${es
 
 function details(subs) {
   return subs.map((s, i) => `<div class="sub"><b>Sub-question ${i + 1}:</b> ${esc(s.question)}
-    <div class="muted">Routes: ${s.routes.map(r => `${esc(r.route)} (${r.confidence})`).join(", ")}</div>
-    ${Object.entries(s.agents).map(([route, a]) => `<details><summary>${esc(route)} agent — answer, ${a.retrieved.length} retrieved, ${a.chunks.length} kept after reranking</summary>
+    <div class="muted">search_corpus sources: ${s.routes.map(r => `${esc(r.route)} (${r.confidence})`).join(", ")}</div>
+    ${Object.entries(s.agents).map(([route, a]) => `<details><summary>🔎 search_corpus(${esc(route)}) — answer, ${a.retrieved.length} retrieved, ${a.chunks.length} kept after reranking</summary>
       <div>${md(a.answer)}</div>${a.retrieved.map(c => `<div class="chunk${c.kept ? " kept" : ""}">${c.kept ? "✅ " : ""}<b>${esc(c.file)} › ${esc(c.section)}</b> — ${esc(c.title)} · reranker ${c.rerank_score}/10\n${esc(c.text)}</div>`).join("")}</details>`).join("")}
+    ${s.sections.map(x => `<details><summary>📖 read_label_section(${esc(x.drug)}, ${esc(x.section)}) — ${esc(x.file)}</summary><div class="chunk kept">${esc(x.text)}</div></details>`).join("")}
+    ${s.glossary.length ? `<details><summary>📚 glossary_lookup — ${s.glossary.length} definition(s)</summary>${s.glossary.map(g => `<div class="chunk kept"><b>${esc(g.term)}</b>: ${esc(g.definition)}</div>`).join("")}</details>` : ""}
     <div><b>Comparator:</b> kept ${esc((s.review.kept || []).join(", ") || "—")}${s.review.contradiction ? " · contradiction detected" : ""}</div>
     ${(s.review.issues || []).map(x => `<div class="issue">⚠️ ${esc(x.type)}: ${esc(x.claim)} — ${esc(x.detail)}</div>`).join("")}</div>`).join("");
 }
